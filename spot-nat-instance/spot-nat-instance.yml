@@ -1,0 +1,201 @@
+## YAML Template.
+---
+
+# Create EIP for NAT although don't have a good way to switch it over. Maybe create 2 and switch back and forth?
+
+Parameters:
+  Application:
+    Type: String
+    Default: default
+    Description: Identifier ( application ) script is being create for ( for naming purposes )
+  VPCId:
+    Type: String
+    Description: VPC Id to use
+  VPCCIDR:
+    Type: String
+    Description: CIDR range of the VPC
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  PublicSubnetId:
+    Type: String
+    Description: Public Subnet ID to create the NAT Instance in
+
+Resources:
+  
+  NATInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}-natinst-sg
+      GroupDescription: Enable internal access to the NAT device
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+      - IpProtocol: -1
+        CidrIp: !Sub ${VPCCIDR}
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        CidrIp: 0.0.0.0/0
+  
+  NATInstanceSsmRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Description: Default role for NAT Instances by SSM
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: Allow
+            Action: "sts:AssumeRole"
+            Principal: 
+              Service: "ec2.amazonaws.com"
+      Policies:
+        - PolicyName: "adjustRouteTableNatSettings"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ec2:CreateRoute"
+                  - "ec2:DeleteRoute"
+                Resource:
+                  - !Sub arn:aws:ec2:*:${AWS::AccountId}:route-table/${NATInstanceRouteTable}
+        - PolicyName: "adjustInstanceSourceChecks"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ec2:ModifyInstanceAttribute"
+                Resource: "*"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        
+  NATInstanceSsmProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref NATInstanceSsmRole
+
+  NATInstanceAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub ${Application}-natinst-asg
+      CapacityRebalance: true
+      DefaultInstanceWarmup: 30
+      DesiredCapacity: 1
+      MaxSize: 1
+      MinSize: 1
+      
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref NATInstanceLaunchTemplate
+            Version: !GetAtt NATInstanceLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: t2.micro           
+            - InstanceType: t3.micro           
+            - InstanceType: t3a.micro           
+        InstancesDistribution:
+          SpotAllocationStrategy: price-capacity-optimized
+          OnDemandBaseCapacity: 0
+          OnDemandPercentageAboveBaseCapacity: 0
+          
+      InstanceMaintenancePolicy:
+        MinHealthyPercentage: 100
+        MaxHealthyPercentage: 110
+
+      LifecycleHookSpecificationList: 
+      - DefaultResult: CONTINUE
+        HeartbeatTimeout: 60
+        LifecycleHookName: pause-termination-for-new-instance-start
+        LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetId
+      Tags:
+        - Key: Name
+          Value: nat-instance-from-asg
+          PropagateAtLaunch: true
+
+  NATInstanceRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCId
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-natinst-rt
+
+  NATInstanceLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${Application}-natinst-lt
+      VersionDescription: Initial version from CloudFormation
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        # The InstanceType will get overridden by the Autoscaling Group
+        InstanceType: t3.micro
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 2
+          HttpTokens: required
+        Monitoring:
+          Enabled: true
+        IamInstanceProfile: 
+          Arn: !GetAtt NATInstanceSsmProfile.Arn
+        NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          Groups: [ !Ref NATInstanceSecurityGroup ]
+          SubnetId: !Ref PublicSubnetId
+          # Need to add name tag
+        UserData:
+          Fn::Base64: !Sub |          
+            #!/bin/bash
+            #
+            set -x
+            #
+            # Apply any missing security updates
+            yum --assumeyes update --security
+            #            
+            # Remove old version 1 of AWS CLI
+            yum --assumeyes remove awscli
+            #
+            # Download and install version 2 of AWS CLI
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip > /dev/null
+            ./aws/install
+            #
+            yun --asumeyes
+            # Create boot script with commands
+            cat << "EOF" > /var/lib/cloud/scripts/per-boot/configure-nat
+            #!/bin/bash
+            #
+            set -x
+            #
+            # Get meta data
+            TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
+            INSTANCE_ID=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id`
+            #
+            # Set source checks to false ( needs IAM permission to do this )
+            aws ec2 modify-instance-attribute --no-source-dest-check --instance-id $INSTANCE_ID
+            #"set 
+            echo 1 > /proc/sys/net/ipv4/ip_forward
+            #
+            # iptables appears to be running already
+            # systemctl start iptables
+            #
+            # Configure NAT properties
+            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+            iptables -F FORWARD
+            #
+            # Deleting existing route if it exists
+            aws ec2 delete-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0
+            #
+            # Adding new route
+            aws ec2 create-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0 --instance-id $INSTANCE_ID
+            #
+            EOF
+            #
+            chmod 755 /var/lib/cloud/scripts/per-boot/configure-nat
+            /var/lib/cloud/scripts/per-boot/configure-nat
