@@ -13,3 +13,7 @@ Drawbacks
 - Source public IP address changes on instance refresh ( Potentially solvable )
 - Non-standard termination of NAT instance will cause connectivity loss until autoscaling group creates replacement instance
 - Only works for VPCs with a single CIDR range ( Potentially solvable )
+
+Medium article: 
+
+https://medium.com/@larryjkl/spot-nat-instance-cloudformation-template-for-aws-e0e9f13719a5
