@@ -15,7 +15,7 @@
 - Only works for VPCs with a single CIDR range ( Potentially solvable )
 
 ## Cloudformation parameters
-- **Application**: This id will get added to the resources created to differenciate them from other versions that get created
+- **Application**: This id will get added to the resources created to tell them apartfrom other stacks that get created
 - **VPCId**: The VPC id that will be used to create the NAT instance and route table
 - **VPCCIDR**: The CIDR range of the VPC
 - **LatestAmiId**: This will default to the lateast AWS Linux2 x86 image which is the starting point for the NAT Instance
