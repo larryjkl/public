@@ -21,7 +21,7 @@
 - **LatestAmiId**: This will default to the lateast AWS Linux2 x86 image which is the starting point for the NAT Instance
 - **PublicSubnetId**: The public subnet ID that the NAT instance will get created in
 
-After the CloudFormation stack is finidhed; one of the resources that is created is a route table. To use the NAT instance,
+After the CloudFormation stack is finished; one of the resources that is created is a route table. To use the NAT instance,
 attach this route table to the private-nat or private subnets that you want to have access to the internet.
 
 Medium article: 
