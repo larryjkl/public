@@ -24,3 +24,6 @@
 After the CloudFormation stack is finidhed; one of the resources that is created is a route table. To use the NAT instance,
 attach this route table to the private-nat or private subnets that you want to have access to the internet.
 
+Medium article: 
+
+https://medium.com/@larryjkl/spot-nat-instance-cloudformation-template-for-aws-e0e9f13719a5
