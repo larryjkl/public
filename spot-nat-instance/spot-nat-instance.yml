@@ -166,7 +166,6 @@ Resources:
             unzip awscliv2.zip > /dev/null
             ./aws/install
             #
-            yun --asumeyes
             # Create boot script with commands
             cat << "EOF" > /var/lib/cloud/scripts/per-boot/configure-nat
             #!/bin/bash
