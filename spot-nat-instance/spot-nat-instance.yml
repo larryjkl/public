@@ -178,7 +178,8 @@ Resources:
             #
             # Set source checks to false ( needs IAM permission to do this )
             aws ec2 modify-instance-attribute --no-source-dest-check --instance-id $INSTANCE_ID
-            #"set 
+            #
+            # Enable port forwarding
             echo 1 > /proc/sys/net/ipv4/ip_forward
             #
             # iptables appears to be running already
