@@ -1,28 +1,36 @@
 ## YAML Template.
 ---
 
-# Create EIP for NAT although don't have a good way to switch it over. Maybe create 2 and switch back and forth?
+# Create EIP for NAT although don't have a good way to switch it over. Maybe create 2 and switch back and forth? ( Brilliant )
+# Should we replace the route if it exists to make it a quicker switch over
 
 Parameters:
   Application:
     Type: String
     Default: default
-    Description: Identifier ( application ) script is being create for ( for naming purposes )
-  VPCId:
-    Type: String
-    Description: VPC Id to use
+    Description: Application or VPC name
   VPCCIDR:
     Type: String
-    Description: CIDR range of the VPC
+    Description: CIDR range of the VPC ( for the NAT security group )
+    Default: 192.168.200.0/24
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VPCId:
+    Type: String
+    Description: VPC Id to use when creating the bastion
   PublicSubnetId:
     Type: String
-    Description: Public Subnet ID to create the NAT Instance in
+    Description: Subnet ID for ec2/natinst
+  EipAlloc1:
+    Type: String
+    Description: 1st of 2 public Elastic IP addresses to use for the NAT instance (optional)
+  EipAlloc2:
+    Type: String
+    Description: 2nd of 2 public Elastic IP addresses to use for the NAT instance (optional)
 
 Resources:
-  
+
   NATInstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -35,7 +43,7 @@ Resources:
       SecurityGroupEgress:
       - IpProtocol: -1
         CidrIp: 0.0.0.0/0
-  
+
   NATInstanceSsmRole:
     Type: "AWS::IAM::Role"
     Properties:
@@ -49,7 +57,7 @@ Resources:
             Principal: 
               Service: "ec2.amazonaws.com"
       Policies:
-        - PolicyName: "adjustRouteTableNatSettings"
+        - PolicyName: !Sub "adjustRouteTableNatSettings-${Application}"
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -57,19 +65,25 @@ Resources:
                 Action:
                   - "ec2:CreateRoute"
                   - "ec2:DeleteRoute"
+                  - "ec2:ReplaceRoute"
                 Resource:
                   - !Sub arn:aws:ec2:*:${AWS::AccountId}:route-table/${NATInstanceRouteTable}
-        - PolicyName: "adjustInstanceSourceChecks"
+              - Effect: Allow
+                Action: "ec2:DescribeRouteTables"
+                Resource: "*"
+        - PolicyName: !Sub "adjustInstanceSettings-${Application}"
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
                   - "ec2:ModifyInstanceAttribute"
+                  - "ec2:AssociateAddress"
+                  - "ec2:DescribeAddresses"
                 Resource: "*"
       ManagedPolicyArns:
         - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        
+
   NATInstanceSsmProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -86,16 +100,16 @@ Resources:
       DesiredCapacity: 1
       MaxSize: 1
       MinSize: 1
-      
+
       MixedInstancesPolicy:
         LaunchTemplate:
           LaunchTemplateSpecification:
             LaunchTemplateId: !Ref NATInstanceLaunchTemplate
             Version: !GetAtt NATInstanceLaunchTemplate.LatestVersionNumber
           Overrides:
-            - InstanceType: t2.micro           
             - InstanceType: t3.micro           
             - InstanceType: t3a.micro           
+            - InstanceType: t2.micro           
         InstancesDistribution:
           SpotAllocationStrategy: price-capacity-optimized
           OnDemandBaseCapacity: 0
@@ -115,7 +129,7 @@ Resources:
         - !Ref PublicSubnetId
       Tags:
         - Key: Name
-          Value: nat-instance-from-asg
+          Value: !Sub ${Application}-natinst-asg-instance
           PropagateAtLaunch: true
 
   NATInstanceRouteTable:
@@ -172,14 +186,27 @@ Resources:
             #
             set -x
             #
-            # Get meta data
+            # Get meta data values
             TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
             INSTANCE_ID=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id`
+            MAC=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/mac`
+            ENI_ID=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/network/interfaces/macs/$MAC/interface-id`
+            #
+            # Check if there are EIPs that should be used and which one of the two is (there should always be one) available
+            #
+            for EIP in ${EipAlloc1} ${EipAlloc2} ; do
+              EIP_ALLOCATED=`aws ec2 describe-addresses --allocation-ids $EIP --output yaml | grep NetworkInterfaceId`
+
+              if [[ -z $EIP_ALLOCATED ]]; then
+                aws ec2 associate-address --region us-east-1 --allocation-id $EIP --network-interface-id $ENI_ID
+                break
+              fi
+            done
             #
             # Set source checks to false ( needs IAM permission to do this )
             aws ec2 modify-instance-attribute --no-source-dest-check --instance-id $INSTANCE_ID
             #
-            # Enable port forwarding
+            # Enable IP address forwarding
             echo 1 > /proc/sys/net/ipv4/ip_forward
             #
             # iptables appears to be running already
@@ -189,11 +216,15 @@ Resources:
             iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
             iptables -F FORWARD
             #
-            # Deleting existing route if it exists
-            aws ec2 delete-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0
             #
-            # Adding new route
-            aws ec2 create-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0 --instance-id $INSTANCE_ID
+            # Check and see if a default route already exists ; if so replace it so as to be as quick as possible
+            ROUTE_EXISTS=`aws ec2 describe-route-tables --route-table-ids ${NATInstanceRouteTable} --output yaml | grep "0.0.0.0"`
+            if [[ -z $ROUTE_EXISTS ]]; then
+              aws ec2 create-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0 --instance-id $INSTANCE_ID
+            else
+              aws ec2 replace-route --route-table-id ${NATInstanceRouteTable} --destination-cidr-block 0.0.0.0/0 --instance-id $INSTANCE_ID
+            fi
+            #
             #
             EOF
             #
