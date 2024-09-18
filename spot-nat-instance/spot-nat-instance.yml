@@ -1,9 +1,6 @@
 ## YAML Template.
 ---
 
-# Create EIP for NAT although don't have a good way to switch it over. Maybe create 2 and switch back and forth? ( Brilliant )
-# Should we replace the route if it exists to make it a quicker switch over
-
 Parameters:
   Application:
     Type: String
@@ -107,9 +104,10 @@ Resources:
             LaunchTemplateId: !Ref NATInstanceLaunchTemplate
             Version: !GetAtt NATInstanceLaunchTemplate.LatestVersionNumber
           Overrides:
+            - InstanceType: t2.micro           
+            - InstanceType: t2.small           
             - InstanceType: t3.micro           
             - InstanceType: t3a.micro           
-            - InstanceType: t2.micro           
         InstancesDistribution:
           SpotAllocationStrategy: price-capacity-optimized
           OnDemandBaseCapacity: 0
