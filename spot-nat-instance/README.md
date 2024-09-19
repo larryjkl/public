@@ -87,4 +87,4 @@ Thanks for getting this far : ). Please reach out via the comments or GitHub iss
 
 There are a number of other NAT instance solutions out there, each with different advantages and challenges. But I believe this solution which provides very reliable NAT functionality at spot prices seems fairly unique. But here are links to other solid alternative solutions that I found during my research and development.
 
-[](https://medium.com/@larryjkl/spot-nat-instance-cloudformation-template-for-aws-e0e9f13719a5)
+[https://medium.com/@larryjkl/spot-nat-instance-cloudformation-template-for-aws-e0e9f13719a5](https://medium.com/@larryjkl/spot-nat-instance-cloudformation-template-for-aws-e0e9f13719a5)
