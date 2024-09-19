@@ -6,14 +6,13 @@ Parameters:
     Type: String
     Default: default
     Description: Application or VPC name
-  VPCCIDR:
+  VpcCidr:
     Type: String
     Description: CIDR range of the VPC ( for the NAT security group )
-    Default: 192.168.200.0/24
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
-  VPCId:
+  VpcId:
     Type: String
     Description: VPC Id to use when creating the bastion
   PublicSubnetId:
@@ -33,10 +32,10 @@ Resources:
     Properties:
       GroupName: !Sub ${Application}-natinst-sg
       GroupDescription: Enable internal access to the NAT device
-      VpcId: !Ref VPCId
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
       - IpProtocol: -1
-        CidrIp: !Sub ${VPCCIDR}
+        CidrIp: !Sub ${VpcCidr}
       SecurityGroupEgress:
       - IpProtocol: -1
         CidrIp: 0.0.0.0/0
@@ -105,11 +104,13 @@ Resources:
             Version: !GetAtt NATInstanceLaunchTemplate.LatestVersionNumber
           Overrides:
             - InstanceType: t2.micro           
-            - InstanceType: t2.small           
             - InstanceType: t3.micro           
             - InstanceType: t3a.micro           
+            - InstanceType: t2.small
+            - InstanceType: t3.small
+            - InstanceType: t3a.small
         InstancesDistribution:
-          SpotAllocationStrategy: price-capacity-optimized
+          SpotAllocationStrategy: capacity-optimized-prioritized
           OnDemandBaseCapacity: 0
           OnDemandPercentageAboveBaseCapacity: 0
           
@@ -133,7 +134,7 @@ Resources:
   NATInstanceRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref VPCId
+      VpcId: !Ref VpcId
       Tags:
       - Key: Name
         Value: !Sub ${Application}-natinst-rt
