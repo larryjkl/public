@@ -1,0 +1,264 @@
+# basic-vpc
+#
+
+Parameters:
+  Environment:
+    Type: String
+    Default: sandbox
+    Description: Environment for this account ( for ex. sandbox, preprod or prod )
+  Application:
+    Type: String
+    Default: default
+    Description: Application name VPC is being created for
+  PrefixCidr:
+    Type: String
+    Description: First 3 digits of the Class C CIDR range to use for the VPC ( ex. 192.1.34 )
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})"
+  CreateNatGateway:
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+    Description: Create a NAT gateway for the private-nat subnet to get to the internet ( roughly $35 a month )    
+    
+Conditions:
+  isCreateNat: !Equals [ !Ref CreateNatGateway, true ]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub ${PrefixCidr}.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-${Environment}-vpc
+      - Key: Version
+        Value: 20241202
+          
+  SubnetAz1Transit:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.0/28
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az1-sn-transit
+  SubnetAz1Private:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.16/28
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az1-sn-private
+  SubnetAz1Public:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.32/27
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az1-sn-public
+  SubnetAz1PrivateNat:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.64/26
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az1-sn-private-nat
+    
+  SubnetAz2Transit:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.128/28
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az2-sn-transit
+  SubnetAz2Private:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.144/28
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az2-sn-private
+  SubnetAz2Public:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.160/27
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az2-sn-public
+  SubnetAz2PrivateNat:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Sub ${PrefixCidr}.192/26
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az2-sn-private-nat
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: Vpc
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-${Environment}-igw
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  ElasticIPAddressAz1:
+    Type: AWS::EC2::EIP
+    Condition: isCreateNat
+    DeletionPolicy: Retain    
+    Properties:
+      Domain: Vpc
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-${Environment}-az1-eip-nat
+  NatGatewayAz1:
+    Type: AWS::EC2::NatGateway
+    Condition: isCreateNat
+    Properties:
+      AllocationId: !GetAtt ElasticIPAddressAz1.AllocationId
+      SubnetId: !Ref SubnetAz1Public
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-${Environment}-az1-nat
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-rt-public
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+
+  PrivateNatAz1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-az1-rt-private-nat
+  PrivateNatAz1Route1:
+    Type: AWS::EC2::Route
+    Condition: isCreateNat
+    Properties:
+      RouteTableId: !Ref PrivateNatAz1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayAz1
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: Name
+        Value: !Sub ${Application}-rt-private
+
+  SubnetAz1PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz1Public
+      RouteTableId: !Ref PublicRouteTable
+  SubnetAz2PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz2Public
+      RouteTableId: !Ref PublicRouteTable
+        
+  SubnetAz1PrivateNatAz1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz1PrivateNat
+      RouteTableId: !Ref PrivateNatAz1RouteTable
+      
+  SubnetAz2PrivateNatAz1RouteTableAssociationNotProd:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz2PrivateNat
+      RouteTableId: !Ref PrivateNatAz1RouteTable
+        
+  SubnetAz1PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz1Private
+      RouteTableId: !Ref PrivateRouteTable
+      
+  SubnetAz2PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetAz2Private
+      RouteTableId: !Ref PrivateRouteTable
+
+Outputs:
+  VpcId:
+    Description: The vpcId from the stack
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub "${Application}-vpcId"
+      
+  VpcCidr:
+    Description: The CIDR range from the stack
+    Value: !Sub ${PrefixCidr}.0/24
+    Export:
+      Name: !Sub "${Application}-vpcCidr"
+      
+  PublicAz1Subnet:
+    Description: The subnetId of the first AZ1 public subnetId
+    Value: !Ref SubnetAz1Public
+    Export:
+      Name: !Sub "${Application}-az1PublicSubnetId"
+  PrivateNatAz1Subnet:
+    Description: The subnetId of the first AZ1 private Nat subnetId
+    Value: !Ref SubnetAz1PrivateNat
+    Export:
+      Name: !Sub "${Application}-az1PrivateNatSubnetId"
+  PrivateAz1Subnet:
+    Description: The subnetId of the first AZ1 private subnetId
+    Value: !Ref SubnetAz1Private
+    Export:
+      Name: !Sub "${Application}-az1PrivateSubnetId"
+      
+  PublicAz2Subnet:
+    Description: The subnetId of the first AZ1 public subnetId
+    Value: !Ref SubnetAz2Public
+    Export:
+      Name: !Sub "${Application}-az2PublicSubnetId"
+  PrivateNatAz2Subnet:
+    Description: The subnetId of the first AZ2 private Nat subnetId
+    Value: !Ref SubnetAz2PrivateNat
+    Export:
+      Name: !Sub "${Application}-az2PrivateNatSubnetId"
+  PrivateAz2Subnet:
+    Description: The subnetId of the first AZ2 private subnetId
+    Value: !Ref SubnetAz2Private
+    Export:
+      Name: !Sub "${Application}-az2PrivateSubnetId"
+
