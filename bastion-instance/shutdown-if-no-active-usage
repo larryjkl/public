@@ -1,0 +1,45 @@
+#!/usr/bin/bash
+
+date
+echo "Checking active usage"
+
+mkdir -p /tmp/shutdown
+
+[ ! -f /tmp/shutdown/ssh.last ] && echo `date +%s` > /tmp/shutdown/ssh.last
+[ ! -f /tmp/shutdown/ssm.last ] && echo `date +%s` > /tmp/shutdown/ssm.last
+
+SSH_EXIST=`ps -ef | grep 'sshd:' | grep root | grep -v grep | wc -l`
+if [ $SSH_EXIST -gt 0 ]
+then
+  echo `date +%s` > /tmp/shutdown/ssh.last
+fi
+
+SSM_EXIST=`ps -ef | grep 'ssm-session-worker' | grep root | grep -v grep | wc -l`
+if [ $SSM_EXIST -gt 0 ]
+then
+  echo `date +%s` > /tmp/shutdown/ssm.last
+fi
+
+NOW=`date +%s`
+
+UP_SINCE=`cat /proc/uptime | cut -d" " -f 1`
+UP_SINCE=`printf "%.0f" $UP_SINCE`
+echo "$UP_SINCE second(s) since boot"
+
+SSH_SINCE=$(( $NOW - `cat /tmp/shutdown/ssh.last` ))
+echo "$SSH_SINCE second(s) since ssh connections"
+
+SSM_SINCE=$(( $NOW - `cat /tmp/shutdown/ssm.last` ))
+echo "$SSM_SINCE second(s) since ssm connections"
+
+if [ $SSH_SINCE -gt 1800 ]
+then
+  if [ $SSM_SINCE -gt 1800 ]
+  then
+    if [ $UP_SINCE -gt 600 ]
+    then
+      echo "Up for 600 seconds and no connections in 1800 seconds, shutting down..."
+      /usr/sbin/shutdown -h now
+    fi
+  fi
+fi

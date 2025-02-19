@@ -1,0 +1,130 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Application:
+    Type: String
+    Default: default
+    Description: Application name bastion is being created for ( must match name used when creating VPC )
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VpcId:
+    Type: String
+    Description: VPC Id to use when creating the bastion
+    Default: vpc-01bf326e1471fa869
+  SubnetId:
+    Type: String
+    Description: Subnet Id to use when creating the bastion
+    Default: subnet-080229c073262b9cd
+    
+Resources:
+          
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}-bastion-sg
+      GroupDescription: Bastion host(s) security group
+      VpcId: !Ref VpcId
+#     SecurityGroupIngress:
+#     - IpProtocol: tcp
+#       FromPort: 22
+#       ToPort: 22
+#       CidrIp: 18.206.107.24/29
+#       Description: Console Instance Connect - us-east-1
+
+  Ec2InstanceSsmRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Description: Default role for ec2Instances to be managed by SSM like the bastion
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: Allow
+            Action: "sts:AssumeRole"
+            Principal: 
+              Service: "ec2.amazonaws.com"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"        
+  Ec2InstanceSsmProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref Ec2InstanceSsmRole
+
+  BastionInstanceLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+#     LaunchTemplateName: IMDSV2
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 2
+          HttpTokens: required
+        InstanceMarketOptions: 
+          MarketType: spot
+          SpotOptions: 
+            InstanceInterruptionBehavior: stop
+            SpotInstanceType: persistent
+    
+  BastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref Ec2InstanceSsmProfile
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BastionInstanceLaunchTemplate
+        Version: !GetAtt BastionInstanceLaunchTemplate.DefaultVersionNumber
+      NetworkInterfaces:
+      - DeviceIndex: '0'
+        AssociatePublicIpAddress: true
+        GroupSet: [ !Ref BastionSecurityGroup ]
+        SubnetId: !Ref SubnetId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 8
+      Tags:
+      - Key: Name
+        Value: !Sub bastion-${Application}
+      - Key: type
+        Value: bastion
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          #
+          # Remove old version 1 of AWS CLI
+          yum --assumeyes remove awscli
+          #
+          # Download and install version 2 of AWS CLI
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          ./aws/install
+          #
+          # Apply any missing security updates
+          yum --assumeyes update --security 
+          #
+          # Create script to update security patches on boot
+          echo '#!/bin/bash' >> /var/lib/cloud/scripts/per-boot/update-security-patches
+          echo 'yum --assumeyes update --security' >> /var/lib/cloud/scripts/per-boot/update-security-patches
+          chmod 755 /var/lib/cloud/scripts/per-boot/update-security-patches
+          #
+          # Configure cron to check for usage and shutdown if not
+          # aws s3 cp s3://soa-shared-stacks-useast1/scripts/unix/bastion/shutdown-if-no-active-usage /root/shutdown-if-no-active-usage
+          # chmod 755 /root/shutdown-if-no-active-usage
+          # echo '*/5 * * * * /root/shutdown-if-no-active-usage 2>&1 | logger -t cron-active-usage' | crontab -
+          #
+          # Signal the stack we are done
+          /opt/aws/bin/cfn-signal -e 0 --resource BastionInstance --stack ${AWS::StackName} --region ${AWS::Region}
+  
+Outputs:
+  BastionSecurityGroup:
+    Description: The bastion security group
+    Value: !Ref BastionSecurityGroup
+    Export:
+      Name: !Sub "${Application}-bastionSgId"
