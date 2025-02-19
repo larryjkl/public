@@ -12,11 +12,9 @@ Parameters:
   VpcId:
     Type: String
     Description: VPC Id to use when creating the bastion
-    Default: vpc-01bf326e1471fa869
   SubnetId:
     Type: String
     Description: Subnet Id to use when creating the bastion
-    Default: subnet-080229c073262b9cd
     
 Resources:
           
@@ -115,9 +113,10 @@ Resources:
           chmod 755 /var/lib/cloud/scripts/per-boot/update-security-patches
           #
           # Configure cron to check for usage and shutdown if not
-          # aws s3 cp s3://soa-shared-stacks-useast1/scripts/unix/bastion/shutdown-if-no-active-usage /root/shutdown-if-no-active-usage
-          # chmod 755 /root/shutdown-if-no-active-usage
-          # echo '*/5 * * * * /root/shutdown-if-no-active-usage 2>&1 | logger -t cron-active-usage' | crontab -
+          cd /root
+          wget https://larryjkl-public.s3.us-east-1.amazonaws.com/bastion-instance/v1/shutdown-if-no-active-usage 
+          chmod 755 /root/shutdown-if-no-active-usage
+          echo '*/5 * * * * /root/shutdown-if-no-active-usage 2>&1 | logger -t cron-active-usage' | crontab -
           #
           # Signal the stack we are done
           /opt/aws/bin/cfn-signal -e 0 --resource BastionInstance --stack ${AWS::StackName} --region ${AWS::Region}
