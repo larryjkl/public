@@ -2,10 +2,10 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Parameters:
-  Application:
+  Name:
     Type: String
     Default: default
-    Description: Application name bastion is being created for ( must match name used when creating VPC )
+    Description: Name to be used for this bastion instance
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
@@ -21,7 +21,7 @@ Resources:
   BastionSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub ${Application}-bastion-sg
+      GroupName: !Sub ${Name}-bastion-sg
       GroupDescription: Bastion host(s) security group
       VpcId: !Ref VpcId
 #     SecurityGroupIngress:
@@ -45,7 +45,6 @@ Resources:
               Service: "ec2.amazonaws.com"
       ManagedPolicyArns:
         - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"        
   Ec2InstanceSsmProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -56,7 +55,6 @@ Resources:
   BastionInstanceLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-#     LaunchTemplateName: IMDSV2
       LaunchTemplateData:
         MetadataOptions:
           HttpEndpoint: enabled
@@ -89,7 +87,7 @@ Resources:
             VolumeSize: 8
       Tags:
       - Key: Name
-        Value: !Sub bastion-${Application}
+        Value: !Sub bastion-${Name}
       - Key: type
         Value: bastion
       UserData:
@@ -126,4 +124,4 @@ Outputs:
     Description: The bastion security group
     Value: !Ref BastionSecurityGroup
     Export:
-      Name: !Sub "${Application}-bastionSgId"
+      Name: !Sub "${Name}-bastion-sg"
