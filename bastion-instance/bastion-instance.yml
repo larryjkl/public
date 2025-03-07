@@ -17,7 +17,7 @@ Parameters:
     Description: Subnet Id to use when creating the bastion
     
 Resources:
-          
+
   BastionSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -111,8 +111,43 @@ Resources:
           chmod 755 /var/lib/cloud/scripts/per-boot/update-security-patches
           #
           # Configure cron to check for usage and shutdown if not
-          cd /root
-          wget https://larryjkl-public.s3.us-east-1.amazonaws.com/bastion-instance/v1/shutdown-if-no-active-usage 
+          # /root/shutdown-if-no-active-usage
+          # ################################################################################
+          cat << "EOF" > /root/shutdown-if-no-active-usage
+          #!/usr/bin/bash
+          date
+          echo "Checking active usage"
+          mkdir -p /tmp/shutdown
+          #
+          [ ! -f /tmp/shutdown/ssh.last ] && echo `date +%s` > /tmp/shutdown/ssh.last
+          [ ! -f /tmp/shutdown/ssm.last ] && echo `date +%s` > /tmp/shutdown/ssm.last
+          #
+          SSH_EXIST=`ps -ef | grep 'sshd:' | grep root | grep -v grep | wc -l`
+          if [ $SSH_EXIST -gt 0 ]; then echo `date +%s` > /tmp/shutdown/ssh.last; fi
+          #
+          SSM_EXIST=`ps -ef | grep 'ssm-session-worker' | grep root | grep -v grep | wc -l`
+          if [ $SSM_EXIST -gt 0 ]; then echo `date +%s` > /tmp/shutdown/ssm.last; fi
+          #
+          NOW=`date +%s`
+          #
+          UP_SINCE=`cat /proc/uptime | cut -d" " -f 1`
+          UP_SINCE=`printf "%.0f" $UP_SINCE`
+          echo "$UP_SINCE second(s) since boot"
+          #
+          SSH_SINCE=$(( $NOW - `cat /tmp/shutdown/ssh.last` ))
+          echo "$SSH_SINCE second(s) since ssh connections"
+          #
+          SSM_SINCE=$(( $NOW - `cat /tmp/shutdown/ssm.last` ))
+          echo "$SSM_SINCE second(s) since ssm connections"
+          #
+          if [ $SSH_SINCE -gt 1800 ] && [ $SSM_SINCE -gt 1800 ] && [ $UP_SINCE -gt 600 ]
+          then
+            echo "Up for 600 seconds and no connections in 1800 seconds, shutting down..."
+            /usr/sbin/shutdown -h now
+          fi
+          EOF
+          # ################################################################################
+          #
           chmod 755 /root/shutdown-if-no-active-usage
           echo '*/5 * * * * /root/shutdown-if-no-active-usage 2>&1 | logger -t cron-active-usage' | crontab -
           #
